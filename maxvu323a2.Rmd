@@ -1,0 +1,241 @@
+---
+title: "ECON 323 Assignment 2"
+output: html_notebook
+---
+
+# Loading the data
+```{r load}
+rm(list=ls())
+
+library(plyr)
+library(dummies)
+library(stargazer)
+library(AER)
+library(plm)
+
+db <- read.csv("literacy.csv", header = TRUE, stringsAsFactors = FALSE)
+db <- subset( db, select = -X )
+head(db)
+```
+The data consist of 7 variables, including rdabil. There are a total of 9455 observations. 
+
+## a) Transforming the data
+```{r transform data}
+#convert sex to binary variable by converting female = 2 to female = 0, leaving male = 1 
+db$sex[db$sex == 2] <- 0
+
+#convert immigration status to binary, where immigrated = 1, not immigratied = 0 
+map_im <- c(1,2,3,4,5,6,7,8)
+
+val_im <- c(1,1,1,1,1,0,0,0)
+
+db$immigration <- mapvalues(db$q14rcd, from = map_im, to = val_im)
+
+#converts highest level of schooling completed to continuous variable years of educ 
+
+map_educ <- c(1,2,3,4,5,6,7,8,9,10,11,12,13)
+
+val_educ <- c(0,6,9,12,14,14,14,14,15,16,16,NA,NA)
+
+db$yeareduc <- mapvalues(db$dvhlea, from = map_educ, to = val_educ)
+
+#converts highest level of schooling completed for parents to continuous variable years of educ
+map_educ_p <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15)
+
+val_educ_p <- c(0,6,9,12,14,14,14,14,14,15,16,16,NA,NA,NA)
+
+db$yeareduc_mom <-mapvalues(db$q41, from = map_educ_p, to = val_educ_p)
+
+db$yeareduc_dad <-mapvalues(db$q45, from = map_educ_p, to = val_educ_p)
+
+#subset selected column into a 2nd database 
+db2 <- subset(db, select = c(rdabil, sex, immigration, prov, yeareduc, yeareduc_mom, yeareduc_dad))
+db2 <- na.omit(db2)
+
+#convert province into a bunch of dummy variable 
+db2 <- cbind(db2, dummy(db2$prov, sep="_prov_"))
+```
+The data is transformed as followed:
+
+* sex: a binary variable for gender where female = 0 and male = 1.
+
+* immigration: a binary variable for immigrated to Canada = 1 and not immigrated to Canada = 0. 
+
+* yeareduc: a continuous variable for years of education of observation i. 
+
+* yeareduc_mom: a continuous variable for years of education of the mother of observation i.
+
+* yeareduc_dad: a continuous variable for years of education of the father of observation i.
+
+* db2_prov_x for x = (0,9): binary variables representing 10 different provinces in Canada. 
+
+
+## b) Regress reading score on a bunch of variables
+
+Perform linear regression of rooms on other variables.
+```{r reg}
+olsreg <- lm(rdabil ~ yeareduc 
+             + sex 
+             + immigration
+             + db2_prov_0 
+             + db2_prov_1 
+             + db2_prov_2
+             + db2_prov_3
+             + db2_prov_4
+             + db2_prov_6
+             + db2_prov_7
+             + db2_prov_8
+             + db2_prov_9, data = db2)
+
+stargazer(olsreg, 
+          title="OLS regression",
+          type="text",
+          digits= 5)
+```
+Note: db2_prov_5 is not included in the regression. This is because it represents Ontario, where the majority of observations were residence of. Hence, it is omitted and will serve as a base group. 
+
+Findings:
+
+* R^2 value is 0.04204, which is very low, suggesting that only 4% of the variation around the mean of the data is explained by the model. 
+
+* Female seems to have higher reading score than male, as the model suggest that being male reduces the reading ability score by 3.08.
+
+* People who have immigrated to Canada score 11.56 than those who have not. But this variable was constructed based on whether they have provided an answer to when they first immigrated to Canada. As such, those who are labelled 0 in the immigration variable therefore might have
+immigration status in Canada, but they for some reason refused to answer it in this question. 
+
+* Every year of education seems to increase the reading ability score by 1.04 point. 
+
+* Based on the binary variables for province, those who have residience in province 8 (Alberta) or province 9 (British Columbia) have higher score than those in Ontario by 5.62 and 6.33 respectively. 
+
+* Being a resident in Province 0 (Newfoundland), Province 1 (Prince Edward Island) and Province 3 (New Brunswick), have the most negative impact on reading ability score of -21.71, -15.81 and -10.04 respectively. 
+
+* It should be noted that there are far less observations from some province than the other. As such, this might have produce endogeneity due to missing data.
+
+## c) Regression with Instrument Variables
+
+### Regression using ivreg function from AER package
+```{r IV reg}
+ivreg_dad <- ivreg(rdabil ~ yeareduc 
+                + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9 |
+                  yeareduc_dad
+                + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9,
+                data = db2)
+
+# IV regression with yeareduc_mom
+ivreg_mom <- ivreg(rdabil ~ yeareduc 
+                + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9 |
+                  yeareduc_mom
+                + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9,
+                data = db2)
+
+# IV regression with yeareduc_dad + yeareduc_mom
+ivreg_dad_mom <- ivreg(rdabil ~ yeareduc 
+                + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9 |
+                  yeareduc_dad + yeareduc_mom
+                + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9,
+                data = db2)
+  
+stargazer(olsreg, ivreg_dad, ivreg_mom, ivreg_dad_mom, 
+          title='IV regressions (both using ivreg & computed manually',
+          type='text',
+          df=FALSE,
+          digits=5)
+```
+With the introduction of years of education of father and mother, in the regression model as instrument,both separately and together, has the following consequences: 
+
+* The R^2 score decreased to a negative values, which suggest that these models absolutely unreliable. 
+
+* years of education have a bigger impact on reading ability score than before. This is the expected outcome of introducing IVs to deal iwth endogeneity in the yeareduc variable. 
+
+* Immigration status seems to bear a much bigger impact on reading ability score, responsible for a 30+ difference in score between the immigrated and the non-immigrated. 
+
+* Yes, the result varied based on the instrument used.
+
+### Regression using 2SLS method 
+
+Now we'll proceed with doing this process programmatically using 2SLS 
+```{r 2SLS}
+# 2SLS with yeareduc_dad  
+tsls1_dad <- lm(yeareduc ~ yeareduc_dad
+             + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9, data = db2)
+
+yeareduc.dad <- fitted.values(tsls1_dad)
+
+tsls2_dad <- lm(rdabil ~ yeareduc.dad
+             + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9, data = db2) 
+
+# 2SLS with yeareduc_mom
+tsls1_mom <- lm(yeareduc ~ yeareduc_mom
+             + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9, data = db2)
+
+yeareduc.mom <- fitted.values(tsls1_mom)
+
+tsls2_mom <- lm(rdabil ~ yeareduc.mom
+             + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9, data = db2)         
+  
+# 2SLS with yeareduc_dad & yeareduc_mom
+tsls1_dad_mom <- lm(yeareduc ~ yeareduc_mom + yeareduc_dad
+             + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9, data = db2)
+
+yeareduc.dad_mom <- fitted.values(tsls1_dad_mom)
+
+tsls2_dad_mom <- lm(rdabil ~ yeareduc.dad_mom
+             + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9, data = db2) 
+
+stargazer(olsreg, tsls2_dad, tsls2_mom, tsls2_dad_mom, 
+          title='IV regressions (both using ivreg & computed manually',
+          type='text',
+          df=FALSE,
+          digits=5)
+```
+The coefficient produced from 2SLS is exactly the same as using ivreg. The only difference is the R^2 value here show improvement, suggesting that using IVs have improved the proportion of variation explained by the model. The best result is when both yeareduc_dad and yeareduc_mom is used, which giv ethe highestes R^2 value of 0.10806. 
+
+## d) Hausman test for endogeneity
+```{r hausman}
+summary(ivreg_dad_mom, diagnostic=TRUE)
+```
+The Hausman test returns a p-value of less than 2e-16, which is below the significant level of p > 0.05. Hence, the null hypothesis is rejected, and that the variable yeareduc is endogenous. 2SLS should therefore be used. 
+
+## e) Good instruments? 
+The 2 qualities of good instrument variables are: 
+For Y = dependent variable, X = endogenous variable; Z = instrument variable (IV); e = residual term from Y after X have been controlled
+
+Z is a good instrument variable if: 
+
+1. Cov(Z, e) == 0, this means the IV is valid, because it is exogenous. 
+
+2. Cov(X, Z) != 0. this means the IV is relevant
+
+### Test for instrument validity using Sargan test
+
+```{r sargan}
+sargan_reg <- lm(tsls2_dad_mom$residuals ~ yeareduc + yeareduc_dad + yeareduc_mom            
+                   + sex + immigration + db2_prov_0 + db2_prov_1 + db2_prov_2 + db2_prov_3 + db2_prov_4 + db2_prov_6 + db2_prov_7 + db2_prov_8 + db2_prov_9, data = db2)
+
+sargan_reg_sm <- summary(sargan_reg)
+sargan_reg_sm
+```
+
+```{r chi^2}
+sargan_test <- sargan_reg_sm$r.squared*nrow(db2)
+sargan_test
+1-pchisq(sargan_test,1)  # prints p-value
+```
+The final p-value for this test is 0, and hence we do not reject the null hypothesis of instrument validity. 
+
+### Test for instrument relevance 
+
+We can test for the relevance of the IV by implementing an F-test on the 1st stage of 2SLS 
+```{r iv relevant}
+iv_ftest <- waldtest(tsls1_dad_mom,.~.-yeareduc_dad-yeareduc_mom)
+print(iv_ftest)
+```
+The F-test returned a large value of 120.47 with extremely small p-value. As such, we can reject the null hypothesis that the IV are irrelevant. The IV of yeareduc_mom and yeareduc_dad are therefore relevant. 
+
+Hence, it can be concluded that we have good IV in yeareduc_dad and yeareduc_mom. They are exogenous, valid and relevant. 
+
+## e) Suggest a different instrument variable
+
+
+
+
